@@ -39,7 +39,8 @@ python3 -m http.server 8000
 | `manifest.webmanifest` | App name, icons, fullscreen and portrait settings |
 | `sw.js` | Service worker: caches the files so the game works offline |
 | `icons/` | App icons (standard, maskable, Apple touch, favicon) |
-
+## live game hear👇
+https://rochtools.github.io/game-hub/
 ## Notes
 
 - The canvas runs at up to 1.5x resolution and quietly drops toward 1x if frames get slow.
