@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#050b16">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Paddle Ball">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="48x48" href="icons/favicon-48.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<title>Paddle Ball — 2 Players, One Device</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden;background:#050b16;color:#fff;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    user-select:none;-webkit-user-select:none;touch-action:none;overscroll-behavior:none}
+  canvas#game{position:fixed;inset:0;display:block;width:100%;height:100%;touch-action:none;contain:strict}
+
+  /* ---------- overlays ---------- */
+  #ui{position:fixed;inset:0;pointer-events:none}
+  .layer{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;
+    padding:calc(14px + env(safe-area-inset-top)) 12px calc(14px + env(safe-area-inset-bottom));
+    background:radial-gradient(120% 80% at 50% 50%, rgba(6,12,24,.82), rgba(3,6,14,.95));
+    pointer-events:none}
+  .layer.hide{display:none}
+  .row{display:flex;justify-content:center}
+  .flip{transform:rotate(180deg)}
+  .card{pointer-events:auto;width:100%;max-width:400px;text-align:center;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    border-radius:18px;padding:14px 14px 12px}
+  .tag{font-size:11px;font-weight:800;letter-spacing:1.6px;margin-bottom:9px}
+  .tag.blue{color:#7dd3fc}
+  .tag.green{color:#86efac}
+  .btn{pointer-events:auto;display:block;width:100%;border:0;cursor:pointer;font-family:inherit;
+    font-weight:900;font-size:19px;letter-spacing:.5px;padding:15px 10px;border-radius:14px;
+    color:#04150c;background:linear-gradient(180deg,#5eead4,#22c55e);
+    transition:transform .08s ease}
+  .btn:active{transform:scale(.96)}
+  .btn.blue{color:#04122b;background:linear-gradient(180deg,#7dd3fc,#3b82f6)}
+  .btn.ghost{background:rgba(255,255,255,.1);color:#fff;font-size:15px;padding:12px;border:1px solid rgba(255,255,255,.2)}
+  .hint{margin-top:9px;font-size:11.5px;line-height:1.5;opacity:.65}
+  .mid{text-align:center;padding:0 8px}
+  .mid h1{font-size:clamp(26px,7vw,40px);font-weight:900;letter-spacing:2px;
+    background:linear-gradient(90deg,#86efac,#fde047,#7dd3fc);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .mid p{font-size:12.5px;opacity:.72;margin-top:7px;letter-spacing:.4px}
+  .mid p.tiny{font-size:11px;opacity:.5;margin-top:4px}
+  .big{font-size:clamp(20px,5.5vw,28px);font-weight:900;margin-bottom:4px}
+  .result{font-size:12px;opacity:.75;margin-bottom:11px}
+
+  /* ---------- small in-game buttons (dead centre = fair for both) ---------- */
+  .sys{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;gap:10px;
+    pointer-events:none;opacity:.4;transition:opacity .2s}
+  .sys.hide{display:none}
+  .sys button{pointer-events:auto;width:34px;height:34px;border-radius:50%;border:1px solid rgba(255,255,255,.25);
+    background:rgba(255,255,255,.1);color:#fff;font-size:12px;line-height:1;cursor:pointer;
+    display:grid;place-items:center;padding:0}
+  .sys button:active{transform:scale(.92)}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div class="sys hide" id="sys">
+  <button id="btnPause" aria-label="Pause">⏸</button>
+  <button id="btnSound" aria-label="Sound">🔊</button>
+</div>
+
+<div id="ui">
+
+  <!-- ================= MENU ================= -->
+  <section class="layer" id="layerMenu">
+    <div class="row"><div class="card flip">
+      <div class="tag blue">PLAYER 2 · TOP</div>
+      <button class="btn blue" data-act="start">▶ START</button>
+      <div class="hint">Drag on the top half · or press <b>A</b> / <b>D</b></div>
+    </div></div>
+
+    <div class="mid">
+      <h1>PADDLE BALL</h1>
+      <p>2 players · 1 device · first to <b>5</b> goals wins</p>
+      <p class="tiny">Hit the ball with your paddle — don't let it pass you</p>
+      <button class="btn ghost" id="btnInstall" type="button" hidden style="margin:12px auto 0;width:auto;padding:10px 22px;font-size:14px">⬇ Install app</button>
+    </div>
+
+    <div class="row"><div class="card">
+      <div class="tag green">PLAYER 1 · BOTTOM</div>
+      <button class="btn" data-act="start">▶ START</button>
+      <div class="hint">Drag on the bottom half · or press <b>◀</b> / <b>▶</b></div>
+    </div></div>
+  </section>
+
+  <!-- ================= GAME OVER ================= -->
+  <section class="layer hide" id="layerOver">
+    <div class="row"><div class="card flip">
+      <div class="tag blue" id="ovTagTop">PLAYER 2</div>
+      <div class="big" id="ovTop">YOU WIN</div>
+      <div class="result" id="ovResTop">5 — 3</div>
+      <button class="btn blue" data-act="start">PLAY AGAIN</button>
+    </div></div>
+
+    <div class="mid">
+      <h1 id="ovMid">GAME OVER</h1>
+      <p id="ovSub">First to 5 wins</p>
+    </div>
+
+    <div class="row"><div class="card">
+      <div class="tag green" id="ovTagBot">PLAYER 1</div>
+      <div class="big" id="ovBot">YOU WIN</div>
+      <div class="result" id="ovResBot">5 — 3</div>
+      <button class="btn" data-act="start">PLAY AGAIN</button>
+    </div></div>
+  </section>
+
+  <!-- ================= PAUSE ================= -->
+  <section class="layer hide" id="layerPause">
+    <div class="row"><div class="card flip">
+      <button class="btn blue" data-act="resume">▶ RESUME</button>
+    </div></div>
+    <div class="mid">
+      <h1>PAUSED</h1>
+      <p>Tap resume to keep playing</p>
+    </div>
+    <div class="row"><div class="card">
+      <button class="btn" data-act="resume">▶ RESUME</button>
+    </div></div>
+  </section>
+
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* =========================================================
+   Setup
+   ========================================================= */
+const cv  = document.getElementById('game');
+const ctx = cv.getContext('2d', { alpha: false });
+const $   = id => document.getElementById(id);
+const WIN_SCORE = 5;
+
+const clamp = (v,a,b) => v < a ? a : (v > b ? b : v);
+
+let W = 1, H = 1, dpr = 1, dprCap = Math.min(window.devicePixelRatio || 1, 1.5);   // 2x on a tall phone = ~10M pixels per frame: too heavy, 1.5x looks the same in motion
+let bgCanvas = null, padSpr = [null, null], idle = 3;                                // idle: frames still to draw while nothing moves
+
+/* geometry (recalculated on resize) */
+let padW, padH, padMargin, ballR, topY, botY, baseSpeed, keySpeed;
+let bgGrad = null, goalTopGrad = null, goalBotGrad = null;
+
+/* state */
+let s1 = 0, s2 = 0;
+let phase = 'menu';           // menu | count | play | goal | over
+let paused = false;
+let soundOn = true;
+let flash = 0;
+const big = { text:'', sub:'', color:'#fff' };
+
+const TR = 6;                                   // ball trail: fixed ring buffer, no per-frame allocations
+const trX = new Float32Array(TR), trY = new Float32Array(TR);
+let trN = 0, trHead = 0;
+const ball = { x:0, y:0, px:0, py:0, nx:0, ny:0, mul:1 };
+let fontBig = '', fontSub = '', fontScore = '';
+const p1 = { x:0, y:0, prevX:0, w:0, h:0, target:null };  // bottom player
+const p2 = { x:0, y:0, prevX:0, w:0, h:0, target:null };  // top player
+
+/* =========================================================
+   Resize / layout — game always fills the whole screen
+   ========================================================= */
+function resize(force){
+  const oldW = W, oldH = H, oldDpr = dpr;
+  dpr = dprCap;
+  W = Math.max(1, Math.round(window.innerWidth));
+  H = Math.max(1, Math.round(window.innerHeight));
+  if (force !== true && W === oldW && H === oldH && dpr === oldDpr) return;     // nothing changed: don't reallocate the canvas
+
+  cv.width  = Math.round(W * dpr);
+  cv.height = Math.round(H * dpr);
+  cv.style.width  = W + 'px';
+  cv.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const short = Math.min(W, H);
+  padW      = clamp(W * 0.24, 68, 260);
+  padH      = clamp(short * 0.020, 10, 17);
+  padMargin = clamp(short * 0.022, 8, 20);
+  ballR     = clamp(short * 0.023, 7, 14);
+  topY      = clamp(H * 0.115, 52, 118);
+  botY      = H - topY;
+  baseSpeed = clamp(H * 0.72, 380, 1250);   // px / second
+  keySpeed  = clamp(W * 0.95, 700, 1600);
+
+  p1.w = p2.w = padW; p1.h = p2.h = padH;
+  p1.y = botY; p2.y = topY;
+
+  /* keep relative positions when the screen changes */
+  if (oldW > 1) { p1.x = p1.x / oldW * W; p2.x = p2.x / oldW * W;
+                  ball.x = ball.x / oldW * W; ball.y = ball.y / oldH * H; }
+  if (!p1.x) { p1.x = W/2; p2.x = W/2; }
+  if (!ball.x) { ball.x = W/2; ball.y = H/2; }
+  p1.prevX = p1.x; p2.prevX = p2.x;
+
+  const fam = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
+  const fs = Math.round(clamp(Math.min(W, H) * 0.16, 40, 120));
+  fontBig = '900 ' + fs + 'px ' + fam;
+  fontSub = '700 ' + Math.round(clamp(fs * 0.26, 12, 26)) + 'px ' + fam;
+  fontScore = '900 ' + Math.round(clamp(Math.min(W, H) * 0.085, 22, 48)) + 'px ' + fam;
+
+  buildStatic();
+  idle = 3;
+}
+/* the whole static field (gradient, goal glows, centre line, circle, goal lines) is painted ONCE per resize
+   and then blitted with a single drawImage per frame; the paddles are pre-rendered sprites too */
+function buildStatic(){
+  bgCanvas = document.createElement('canvas');
+  bgCanvas.width = cv.width; bgCanvas.height = cv.height;
+  const g = bgCanvas.getContext('2d', { alpha: false });
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  let gr = g.createLinearGradient(0, 0, 0, H);
+  gr.addColorStop(0, '#0a1d33'); gr.addColorStop(0.5, '#08111f'); gr.addColorStop(1, '#0a221a');
+  g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  const gh = Math.max(60, H * 0.1);
+  gr = g.createLinearGradient(0, 0, 0, gh);
+  gr.addColorStop(0, 'rgba(56,189,248,.30)'); gr.addColorStop(1, 'rgba(56,189,248,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, W, gh);
+  gr = g.createLinearGradient(0, H, 0, H - gh);
+  gr.addColorStop(0, 'rgba(74,222,128,.30)'); gr.addColorStop(1, 'rgba(74,222,128,0)');
+  g.fillStyle = gr; g.fillRect(0, H - gh, W, gh);
+  g.strokeStyle = 'rgba(255,255,255,.13)'; g.lineWidth = 2;
+  g.setLineDash([10, 12]);
+  g.beginPath(); g.moveTo(0, H / 2); g.lineTo(W, H / 2); g.stroke();
+  g.setLineDash([]);
+  g.beginPath(); g.arc(W / 2, H / 2, Math.min(W, H) * 0.13, 0, 6.2832); g.stroke();
+  g.strokeStyle = 'rgba(255,255,255,.23)';
+  g.beginPath();
+  g.moveTo(padMargin, botY + padH); g.lineTo(W - padMargin, botY + padH);
+  g.moveTo(padMargin, topY - padH); g.lineTo(W - padMargin, topY - padH);
+  g.stroke();
+  padSpr[0] = makePaddle('#38bdf8');   // top player
+  padSpr[1] = makePaddle('#4ade80');   // bottom player
+}
+function makePaddle(accent){
+  const c = document.createElement('canvas');
+  c.width = Math.ceil(padW * dpr); c.height = Math.ceil(padH * dpr);
+  const g = c.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const rr = (x, y, w, h, r) => {
+    r = Math.min(r, w / 2, h / 2);
+    g.beginPath(); g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+  };
+  g.fillStyle = accent;    rr(0, 0, padW, padH, padH / 2); g.fill();
+  g.fillStyle = '#c98d4b'; rr(2, 2, padW - 4, padH - 4, padH / 2 - 1); g.fill();
+  g.fillStyle = '#efc488'; rr(8, padH * 0.30, padW - 16, padH * 0.24, padH * 0.12); g.fill();
+  return c;
+}
+/* resize bursts (fullscreen, toolbars, rotation) are merged into one resize per frame */
+let resizeQueued = false;
+function queueResize(){ if (resizeQueued) return; resizeQueued = true; requestAnimationFrame(() => { resizeQueued = false; resize(); }); }
+window.addEventListener('resize', queueResize);
+window.addEventListener('orientationchange', () => setTimeout(queueResize, 120));
+if (window.visualViewport) window.visualViewport.addEventListener('resize', queueResize);
+document.addEventListener('fullscreenchange', () => setTimeout(queueResize, 60));
+
+/* =========================================================
+   Tiny sound (no files, no libraries)
+   ========================================================= */
+let AC = null;
+function audioWarm(){            // called from a tap: build the AudioContext now so the first beep doesn't hitch the game
+  try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch (e) {}
+}
+function tone(freq, dur, type, vol){
+  if (!soundOn) return;
+  try {
+    if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
+    if (AC.state === 'suspended') AC.resume();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'square';
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(vol || 0.09, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + dur);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + dur);
+  } catch (e) {}
+}
+const sHit   = () => tone(520, 0.05, 'square', 0.07);
+const sWall  = () => tone(300, 0.04, 'square', 0.05);
+const sTick  = () => tone(620, 0.07, 'sine',   0.09);
+const sGo    = () => tone(880, 0.16, 'square', 0.09);
+const sGoal  = () => { tone(220, 0.28, 'sawtooth', 0.10); tone(160, 0.32, 'sawtooth', 0.08); };
+
+/* =========================================================
+   Fullscreen (called straight from the START tap)
+   ========================================================= */
+function goFullscreen(){
+  const el = document.documentElement;
+  try {
+    if (el.requestFullscreen) { const p = el.requestFullscreen({ navigationUI: 'hide' }); if (p && p.catch) p.catch(()=>{}); }
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    else if (el.msRequestFullscreen) el.msRequestFullscreen();
+  } catch (e) {}
+  try { if (screen.orientation && screen.orientation.lock) { const p = screen.orientation.lock('portrait'); if (p && p.catch) p.catch(()=>{}); } } catch (e) {}
+}
+
+/* =========================================================
+   Layers
+   ========================================================= */
+const layers = { menu: $('layerMenu'), over: $('layerOver'), pause: $('layerPause') };
+const sys = $('sys');
+function showLayer(name){
+  idle = 3;
+  for (const k in layers) layers[k].classList.toggle('hide', k !== name);
+  sys.classList.toggle('hide', name === 'menu' || name === 'over');
+}
+function hideLayers(){ for (const k in layers) layers[k].classList.add('hide'); }
+
+/* =========================================================
+   Game flow
+   ========================================================= */
+function setBig(text, sub, color){
+  big.text = text; big.sub = sub || ''; big.color = color || '#fde047';
+}
+function clearBig(){ big.text = ''; big.sub = ''; }
+
+function serve(dir){                      // dir: -1 = up (to P2), +1 = down (to P1)
+  ball.x = W / 2; ball.y = H / 2;
+  ball.px = ball.x; ball.py = ball.y;
+  ball.mul = 1;
+  trN = 0; trHead = 0;
+  const a = (Math.random() * 0.5 - 0.25);  // ±14°
+  ball.nx = Math.sin(a);
+  ball.ny = Math.cos(a) * dir;
+}
+
+function countdown(dir){
+  phase = 'count';
+  const seq = ['3', '2', '1', 'GO!'];
+  let i = 0;
+  (function tick(){
+    if (paused) { setTimeout(tick, 150); return; }
+    if (i < 3) {
+      setBig(seq[i], 'GET READY', '#fde047');
+      sTick();
+      i++;
+      setTimeout(tick, 470);
+    } else {
+      setBig('GO!', '', '#4ade80');
+      sGo();
+      serve(dir);
+      phase = 'play';
+      setTimeout(clearBig, 420);
+    }
+  })();
+}
+
+function startGame(){
+  audioWarm();
+  idle = 3;
+  goFullscreen();
+  hideLayers();
+  sys.classList.remove('hide');
+  s1 = 0; s2 = 0;
+  paused = false;
+  flash = 0;
+  p1.target = null; p2.target = null;
+  p1.x = p2.x = W / 2;
+  p1.prevX = p2.prevX = W / 2;
+  btnPause.textContent = '⏸';
+  countdown(-1);            // first ball goes to the TOP player
+}
+
+function goal(scorer){       // scorer: 1 = bottom player, 2 = top player
+  if (phase !== 'play') return;
+  phase = 'goal';
+  flash = 1;
+  sGoal();
+  try { if (navigator.vibrate) navigator.vibrate(60); } catch (e) {}
+  if (scorer === 1) { s1++; setBig('GOAL!', 'PLAYER 1 SCORES', '#4ade80'); }
+  else              { s2++; setBig('GOAL!', 'PLAYER 2 SCORES', '#38bdf8'); }
+
+  setTimeout(() => {
+    clearBig();
+    if (s1 >= WIN_SCORE || s2 >= WIN_SCORE) { gameOver(); return; }
+    countdown(scorer === 1 ? -1 : 1);   // serve to the player who conceded
+  }, 1050);
+}
+
+function gameOver(){
+  phase = 'over';
+  paused = false;
+  clearBig();
+  const p1won = s1 > s2;
+  const a = p1won ? s1 : s2, b = p1won ? s2 : s1;
+
+  $('ovMid').textContent = p1won ? 'PLAYER 1 WINS' : 'PLAYER 2 WINS';
+  $('ovSub').textContent = 'Final score ' + a + ' — ' + b;
+  $('ovTagTop').textContent = 'PLAYER 2 · TOP';
+  $('ovTagBot').textContent = 'PLAYER 1 · BOTTOM';
+  $('ovTop').textContent    = p1won ? 'YOU LOSE' : '🏆 YOU WIN';
+  $('ovBot').textContent    = p1won ? '🏆 YOU WIN' : 'YOU LOSE';
+  $('ovResTop').textContent = p1won ? (s2 + ' — ' + s1) : (s2 + ' — ' + s1);
+  $('ovResBot').textContent = p1won ? (s1 + ' — ' + s2) : (s1 + ' — ' + s2);
+
+  showLayer('over');
+  tone(660, 0.14, 'triangle', 0.1);
+  setTimeout(() => tone(990, 0.22, 'triangle', 0.1), 150);
+}
+
+function togglePause(){
+  if (phase !== 'play' && phase !== 'count') return;
+  paused = !paused;
+  btnPause.textContent = paused ? '▶' : '⏸';
+  if (paused) showLayer('pause'); else hideLayers();
+}
+function resumeGame(){ if (paused) togglePause(); }
+
+/* =========================================================
+   Input — separate touches for each half of the screen
+   ========================================================= */
+const touches = new Map();      // touch identifier -> 1 | 2
+
+function pointFromEvent(t){ return { x: t.clientX, y: t.clientY }; }   // the canvas is fixed at 0,0: no getBoundingClientRect (forced layout) per touch event
+function padFor(who){ return who === 1 ? p1 : p2; }
+
+cv.addEventListener('touchstart', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    const p = pointFromEvent(t);
+    const who = p.y < H / 2 ? 2 : 1;         // top half → P2, bottom half → P1
+    touches.set(t.identifier, who);
+    padFor(who).target = clamp(p.x, 0, W);
+  }
+}, { passive: false });
+
+cv.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    let who = touches.get(t.identifier);
+    const p = pointFromEvent(t);
+    if (!who) { who = p.y < H / 2 ? 2 : 1; touches.set(t.identifier, who); }
+    padFor(who).target = clamp(p.x, 0, W);
+  }
+}, { passive: false });
+
+function endTouch(e){
+  e.preventDefault();
+  for (const t of e.changedTouches) touches.delete(t.identifier);
+  for (const who of [1, 2]) {
+    let still = false;
+    for (const v of touches.values()) if (v === who) { still = true; break; }
+    if (!still) padFor(who).target = null;
+  }
+}
+cv.addEventListener('touchend', endTouch, { passive: false });
+cv.addEventListener('touchcancel', endTouch, { passive: false });
+
+/* mouse drag (laptop) */
+let mouseDown = false, mouseWho = 1;
+cv.addEventListener('mousedown', e => {
+  const p = pointFromEvent(e);
+  mouseWho = p.y < H / 2 ? 2 : 1;
+  mouseDown = true;
+  padFor(mouseWho).target = clamp(p.x, 0, W);
+});
+window.addEventListener('mousemove', e => {
+  if (!mouseDown) return;
+  const p = pointFromEvent(e);
+  padFor(mouseWho).target = clamp(p.x, 0, W);
+});
+window.addEventListener('mouseup', () => {
+  mouseDown = false; p1.target = null; p2.target = null;
+});
+
+/* keyboard: P1 = ← →   |   P2 = A D   |   Space = pause */
+const keys = Object.create(null);
+window.addEventListener('keydown', e => {
+  if (e.code === 'ArrowLeft' || e.code === 'ArrowRight' || e.code === 'Space') e.preventDefault();
+  keys[e.code] = true;
+  if (e.code === 'Space') togglePause();
+  if (e.code === 'Enter' && (phase === 'menu' || phase === 'over')) startGame();
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+/* =========================================================
+   Buttons
+   ========================================================= */
+document.querySelectorAll('[data-act]').forEach(b => {
+  b.addEventListener('click', e => {
+    e.stopPropagation();
+    const act = b.dataset.act;
+    if (act === 'start')  startGame();
+    if (act === 'resume') resumeGame();
+  });
+});
+const btnPause = $('btnPause'), btnSound = $('btnSound');
+btnPause.addEventListener('click', e => { e.stopPropagation(); togglePause(); });
+btnSound.addEventListener('click', e => {
+  e.stopPropagation();
+  soundOn = !soundOn;
+  btnSound.textContent = soundOn ? '🔊' : '🔇';
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && (phase === 'play' || phase === 'count') && !paused) togglePause();
+});
+
+/* =========================================================
+   Physics
+   ========================================================= */
+function movePaddles(dt){
+  const k = keySpeed * dt;
+
+  p1.prevX = p1.x;
+  if (keys['ArrowLeft'])  p1.x -= k;
+  if (keys['ArrowRight']) p1.x += k;
+  if (p1.target !== null) p1.x += (p1.target - p1.x) * Math.min(1, 24 * dt);
+  p1.x = clamp(p1.x, p1.w / 2 + padMargin, W - p1.w / 2 - padMargin);
+
+  p2.prevX = p2.x;
+  if (keys['KeyA']) p2.x -= k;
+  if (keys['KeyD']) p2.x += k;
+  if (p2.target !== null) p2.x += (p2.target - p2.x) * Math.min(1, 24 * dt);
+  p2.x = clamp(p2.x, p2.w / 2 + padMargin, W - p2.w / 2 - padMargin);
+}
+
+function hitPaddle(pad, dir){          // dir +1 → ball travels down, -1 → up
+  const rel  = clamp((ball.x - pad.x) / (pad.w / 2), -1, 1);
+  const ang  = rel * 1.0 + (Math.random() - 0.5) * 0.05;    // up to ~57° (+ tiny jitter, no vertical lock)
+  let nx = Math.sin(ang) + clamp((pad.x - pad.prevX) * 0.06, -0.3, 0.3);
+  nx = clamp(nx, -0.92, 0.92);
+  const ny = Math.sqrt(1 - nx * nx) * dir;
+
+  ball.nx = nx; ball.ny = ny;
+  ball.mul = Math.min(2.1, ball.mul * 1.045);               // rally gets faster
+  ball.y = pad.y + dir * (pad.h / 2 + ballR + 1);
+  ball.x = clamp(ball.x, ballR + 4, W - ballR - 4);
+
+  flash = Math.max(flash, 0.16);
+  sHit();
+}
+
+function stepPlay(dt){
+  const speed = baseSpeed * ball.mul;
+
+  ball.px = ball.x; ball.py = ball.y;
+  ball.x += ball.nx * speed * dt;
+  ball.y += ball.ny * speed * dt;
+
+  /* side walls */
+  if (ball.x - ballR < padMargin) {
+    ball.x = padMargin + ballR;
+    ball.nx = Math.abs(ball.nx);
+    sWall();
+  } else if (ball.x + ballR > W - padMargin) {
+    ball.x = W - padMargin - ballR;
+    ball.nx = -Math.abs(ball.nx);
+    sWall();
+  }
+
+  /* top paddle (player 2) — swept check so nothing tunnels through */
+  if (ball.ny < 0) {
+    const edge = p2.y + p2.h / 2;
+    const prevTop = ball.py - ballR, curTop = ball.y - ballR;
+    if (prevTop >= edge && curTop <= edge) {
+      const t = (prevTop - edge) / Math.max(0.0001, prevTop - curTop);
+      const cx = ball.px + (ball.x - ball.px) * t;
+      if (Math.abs(cx - p2.x) <= p2.w / 2 + ballR * 0.9) { ball.x = cx; hitPaddle(p2, 1); }
+    }
+  }
+  /* bottom paddle (player 1) */
+  if (ball.ny > 0) {
+    const edge = p1.y - p1.h / 2;
+    const prevBot = ball.py + ballR, curBot = ball.y + ballR;
+    if (prevBot <= edge && curBot >= edge) {
+      const t = (edge - prevBot) / Math.max(0.0001, curBot - prevBot);
+      const cx = ball.px + (ball.x - ball.px) * t;
+      if (Math.abs(cx - p1.x) <= p1.w / 2 + ballR * 0.9) { ball.x = cx; hitPaddle(p1, -1); }
+    }
+  }
+
+  /* trail (6 points, cheap) */
+  trX[trHead] = ball.x; trY[trHead] = ball.y; trHead = (trHead + 1) % TR; if (trN < TR) trN++;
+
+  /* goals */
+  if (ball.y < -ballR * 3)      goal(1);
+  else if (ball.y > H + ballR*3) goal(2);
+}
+
+/* =========================================================
+   Drawing (flat shapes only — no blur/shadow filters)
+   ========================================================= */
+function roundRect(x, y, w, h, r){
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+function mirrorDraw(fn){
+  ctx.save();
+  ctx.translate(W / 2, H / 2); ctx.rotate(Math.PI); ctx.translate(-W / 2, -H / 2);
+  fn();
+  ctx.restore();
+}
+
+function drawPaddle(p, spr){ ctx.drawImage(spr, p.x - p.w / 2, p.y - p.h / 2, p.w, p.h); }
+
+function drawScore(){
+  const fs = Math.round(clamp(Math.min(W, H) * 0.085, 22, 48));
+  ctx.font = fontScore;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const yb = H - Math.max(fs * 0.85, padH * 1.9);
+
+  ctx.fillStyle = '#4ade80';
+  ctx.fillText(s1, W / 2, yb);
+
+  mirrorDraw(() => {
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText(s2, W / 2, yb);
+  });
+}
+
+function drawBig(){
+  if (!big.text) return;
+  const fs = Math.round(clamp(Math.min(W, H) * 0.16, 40, 120));
+  const y = H * 0.66;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const paint = () => {
+    ctx.font = fontBig; ctx.fillStyle = big.color; ctx.fillText(big.text, W / 2, y);
+    if (big.sub) { ctx.font = fontSub; ctx.fillStyle = 'rgba(255,255,255,.78)'; ctx.fillText(big.sub, W / 2, y + fs * 0.82); }
+  };
+  paint();
+  mirrorDraw(paint);
+}
+
+function draw(){
+  ctx.drawImage(bgCanvas, 0, 0, W, H);          /* field: one blit */
+
+  /* trail (oldest → newest) */
+  if (trN > 1) {
+    ctx.fillStyle = '#fde047';
+    for (let i = 0; i < trN; i++) {
+      const k = (trHead - trN + i + TR * 2) % TR, a = (i + 1) / trN;
+      ctx.globalAlpha = a * 0.22;
+      ctx.beginPath(); ctx.arc(trX[k], trY[k], ballR * a, 0, 6.2832); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  drawPaddle(p2, padSpr[0]);
+  drawPaddle(p1, padSpr[1]);
+
+  if (phase !== 'menu') {
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(ball.x, ball.y, ballR, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = '#fde047';
+    ctx.beginPath(); ctx.arc(ball.x, ball.y, ballR * 0.42, 0, 6.2832); ctx.fill();
+  }
+
+  drawScore();
+  drawBig();
+
+  if (flash > 0) {
+    ctx.globalAlpha = flash * 0.28;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* =========================================================
+   Main loop
+   ========================================================= */
+let last = performance.now(), ftAcc = 0, ftN = 0;
+function frame(t){
+  requestAnimationFrame(frame);                // schedule first: an error below can never stop the loop
+  let dt = (t - last) / 1000;
+  last = t;
+  if (dt <= 0) return;
+  if (dt > 0.05) dt = 0.05;
+
+  const animating = !paused && (phase === 'play' || phase === 'count' || phase === 'goal' || flash > 0);
+  if (!paused) {
+    movePaddles(dt);
+    if (phase === 'play') stepPlay(dt);
+    if (flash > 0) flash -= dt * 2.4;
+  }
+  if (animating) {
+    /* adaptive sharpness: if frames are slow, quietly lower the canvas resolution (never below 1x) */
+    if (dt < 0.1) { ftAcc += dt; ftN++; }
+    if (ftN >= 45) {
+      const avg = ftAcc / ftN; ftAcc = 0; ftN = 0;
+      if (avg > 0.0195 && dprCap > 1) { dprCap = Math.max(1, dprCap - 0.25); resize(true); }
+    }
+    draw();
+  } else if (idle > 0) {                        // menu / pause / game over: nothing moves, so don't redraw every frame
+    idle--; draw();
+  }
+}
+
+/* =========================================================
+   Boot
+   ========================================================= */
+window.__pb = { start:startGame, state:()=>({s1,s2,phase,paused,ball,p1,p2,W,H,baseSpeed}), pad:w=>{ (w===1?p1:p2).target = null; }, move:(who,x)=>{ (who===1?p1:p2).x = x; } };
+
+resize();
+p1.x = p2.x = W / 2;
+ball.x = W / 2; ball.y = H / 2;
+showLayer('menu');
+requestAnimationFrame(frame);
+
+/* installable web app: offline cache + optional "Install app" button */
+if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+let installEv = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEv = e; $('btnInstall').hidden = false; });
+$('btnInstall').addEventListener('click', async e => {
+  e.stopPropagation();
+  if (!installEv) return; installEv.prompt(); try { await installEv.userChoice; } catch (x) {}
+  installEv = null; $('btnInstall').hidden = true;
+});
+window.addEventListener('appinstalled', () => { installEv = null; $('btnInstall').hidden = true; });
+
+/* block page scroll / zoom gestures */
+document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+document.addEventListener('gesturestart', e => e.preventDefault());
+document.addEventListener('dblclick', e => e.preventDefault());
+document.addEventListener('contextmenu', e => e.preventDefault());
+
+})();
+</script>
+</body>
+</html>
