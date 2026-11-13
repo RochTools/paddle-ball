@@ -1,5 +1,5 @@
 // Paddle Ball service worker: everything is cached on install, so the game opens instantly and works offline.
-const VERSION = 'paddle-ball-v1';
+const VERSION = 'paddle-ball-v2';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png', './icons/favicon-48.png'];
 
 self.addEventListener('install', (e) => {

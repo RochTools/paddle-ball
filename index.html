@@ -81,7 +81,7 @@
     <div class="mid">
       <h1>PADDLE BALL</h1>
       <p>2 players · 1 device · first to <b>5</b> goals wins</p>
-      <p class="tiny">Hit the ball with your paddle — don't let it pass you</p>
+      <p class="tiny">The ball rests on a paddle — tap your half to serve</p>
       <button class="btn ghost" id="btnInstall" type="button" hidden style="margin:12px auto 0;width:auto;padding:10px 22px;font-size:14px">⬇ Install app</button>
     </div>
 
@@ -163,7 +163,7 @@ const TR = 6;                                   // ball trail: fixed ring buffer
 const trX = new Float32Array(TR), trY = new Float32Array(TR);
 let trN = 0, trHead = 0;
 const ball = { x:0, y:0, px:0, py:0, nx:0, ny:0, mul:1 };
-let fontBig = '', fontSub = '', fontScore = '';
+let fontBig = '', fontSub = '', fontScore = '', fontHint = '';
 const p1 = { x:0, y:0, prevX:0, w:0, h:0, target:null };  // bottom player
 const p2 = { x:0, y:0, prevX:0, w:0, h:0, target:null };  // top player
 
@@ -207,6 +207,7 @@ function resize(force){
   const fs = Math.round(clamp(Math.min(W, H) * 0.16, 40, 120));
   fontBig = '900 ' + fs + 'px ' + fam;
   fontSub = '700 ' + Math.round(clamp(fs * 0.26, 12, 26)) + 'px ' + fam;
+  fontHint = '800 ' + Math.round(clamp(Math.min(W, H) * 0.05, 15, 28)) + 'px ' + fam;
   fontScore = '900 ' + Math.round(clamp(Math.min(W, H) * 0.085, 22, 48)) + 'px ' + fam;
 
   buildStatic();
@@ -271,7 +272,7 @@ document.addEventListener('fullscreenchange', () => setTimeout(queueResize, 60))
    ========================================================= */
 let AC = null;
 function audioWarm(){            // called from a tap: build the AudioContext now so the first beep doesn't hitch the game
-  try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch (e) {}
+  try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); loadSounds(); } catch (e) {}
 }
 function tone(freq, dur, type, vol){
   if (!soundOn) return;
@@ -287,11 +288,38 @@ function tone(freq, dur, type, vol){
     o.start(); o.stop(AC.currentTime + dur);
   } catch (e) {}
 }
-const sHit   = () => tone(520, 0.05, 'square', 0.07);
-const sWall  = () => tone(300, 0.04, 'square', 0.05);
-const sTick  = () => tone(620, 0.07, 'sine',   0.09);
-const sGo    = () => tone(880, 0.16, 'square', 0.09);
-const sGoal  = () => { tone(220, 0.28, 'sawtooth', 0.10); tone(160, 0.32, 'sawtooth', 0.08); };
+/* ---- optional mp3 files in the sounds/ folder (first name that exists is used). A missing file keeps the built-in beep. ----
+     hit.mp3   ball touches a paddle      wall.mp3  ball hits a side wall
+     goal.mp3  a goal is scored           win.mp3   a player wins the match                                       */
+const SOUND_FILES = { hit: ['hit', 'paddle'], wall: ['wall', 'bounce'], goal: ['goal'], win: ['win', 'victory'] };
+const SOUND_VOL   = { hit: 0.9, wall: 0.7, goal: 1, win: 1 };
+const sndBuf = {};
+let sndLoading = false;
+async function loadSounds(){
+  if (sndLoading || !AC) return; sndLoading = true;
+  await Promise.all(Object.keys(SOUND_FILES).map(async key => {
+    for (const name of SOUND_FILES[key]) {
+      try {
+        const r = await fetch('sounds/' + name + '.mp3'); if (!r.ok) continue;
+        sndBuf[key] = await AC.decodeAudioData(await r.arrayBuffer()); return;
+      } catch (e) { /* missing or not decodable: try the next name, else keep the beep */ }
+    }
+  }));
+}
+function playSnd(key){            // true if an mp3 was played
+  const b = sndBuf[key]; if (!b || !AC || !soundOn) return false;
+  try {
+    if (AC.state === 'suspended') AC.resume();
+    const src = AC.createBufferSource(), g = AC.createGain();
+    src.buffer = b; g.gain.value = SOUND_VOL[key] || 1; src.connect(g); g.connect(AC.destination); src.start();
+    return true;
+  } catch (e) { return false; }
+}
+const sHit   = () => playSnd('hit')  || tone(520, 0.05, 'square', 0.07);
+const sWall  = () => playSnd('wall') || tone(300, 0.04, 'square', 0.05);
+const sGo    = () => tone(880, 0.16, 'square', 0.06);
+const sGoal  = () => playSnd('goal') || (tone(220, 0.28, 'sawtooth', 0.10), tone(160, 0.32, 'sawtooth', 0.08));
+const sWin   = () => playSnd('win')  || (tone(660, 0.14, 'triangle', 0.1), setTimeout(() => tone(990, 0.22, 'triangle', 0.1), 150));
 
 /* =========================================================
    Fullscreen (called straight from the START tap)
@@ -326,35 +354,24 @@ function setBig(text, sub, color){
 }
 function clearBig(){ big.text = ''; big.sub = ''; }
 
-function serve(dir){                      // dir: -1 = up (to P2), +1 = down (to P1)
-  ball.x = W / 2; ball.y = H / 2;
+let server = 1;                          // who holds the ball: 1 = bottom player, 2 = top player
+function stickBall(){                    // ball rides on the server's paddle until the serve
+  const p = server === 1 ? p1 : p2, dir = server === 1 ? -1 : 1;
+  ball.x = p.x; ball.y = p.y + dir * (p.h / 2 + ballR + 1);
   ball.px = ball.x; ball.py = ball.y;
-  ball.mul = 1;
-  trN = 0; trHead = 0;
-  const a = (Math.random() * 0.5 - 0.25);  // ±14°
-  ball.nx = Math.sin(a);
-  ball.ny = Math.cos(a) * dir;
 }
-
-function countdown(dir){
-  phase = 'count';
-  const seq = ['3', '2', '1', 'GO!'];
-  let i = 0;
-  (function tick(){
-    if (paused) { setTimeout(tick, 150); return; }
-    if (i < 3) {
-      setBig(seq[i], 'GET READY', '#fde047');
-      sTick();
-      i++;
-      setTimeout(tick, 470);
-    } else {
-      setBig('GO!', '', '#4ade80');
-      sGo();
-      serve(dir);
-      phase = 'play';
-      setTimeout(clearBig, 420);
-    }
-  })();
+function beginServe(who){
+  server = who; phase = 'serve'; clearBig();
+  trN = 0; trHead = 0; ball.mul = 1;
+  stickBall(); idle = 3;
+}
+function launch(){                       // tap on the server's half
+  if (phase !== 'serve' || paused) return;
+  const dir = server === 1 ? -1 : 1, p = server === 1 ? p1 : p2;
+  const a = clamp((p.x - p.prevX) * 0.01, -0.3, 0.3) + (Math.random() * 0.3 - 0.15);   // a little of the paddle's motion + a small random angle
+  ball.nx = Math.sin(a); ball.ny = Math.cos(a) * dir;
+  ball.px = ball.x; ball.py = ball.y;
+  phase = 'play'; sGo();
 }
 
 function startGame(){
@@ -370,7 +387,7 @@ function startGame(){
   p1.x = p2.x = W / 2;
   p1.prevX = p2.prevX = W / 2;
   btnPause.textContent = '⏸';
-  countdown(-1);            // first ball goes to the TOP player
+  beginServe(1);            // the bottom player serves first
 }
 
 function goal(scorer){       // scorer: 1 = bottom player, 2 = top player
@@ -385,7 +402,7 @@ function goal(scorer){       // scorer: 1 = bottom player, 2 = top player
   setTimeout(() => {
     clearBig();
     if (s1 >= WIN_SCORE || s2 >= WIN_SCORE) { gameOver(); return; }
-    countdown(scorer === 1 ? -1 : 1);   // serve to the player who conceded
+    beginServe(scorer === 1 ? 2 : 1);   // the player who conceded holds the ball
   }, 1050);
 }
 
@@ -406,12 +423,11 @@ function gameOver(){
   $('ovResBot').textContent = p1won ? (s1 + ' — ' + s2) : (s1 + ' — ' + s2);
 
   showLayer('over');
-  tone(660, 0.14, 'triangle', 0.1);
-  setTimeout(() => tone(990, 0.22, 'triangle', 0.1), 150);
+  sWin();
 }
 
 function togglePause(){
-  if (phase !== 'play' && phase !== 'count') return;
+  if (phase !== 'play' && phase !== 'serve') return;
   paused = !paused;
   btnPause.textContent = paused ? '▶' : '⏸';
   if (paused) showLayer('pause'); else hideLayers();
@@ -433,6 +449,7 @@ cv.addEventListener('touchstart', e => {
     const who = p.y < H / 2 ? 2 : 1;         // top half → P2, bottom half → P1
     touches.set(t.identifier, who);
     padFor(who).target = clamp(p.x, 0, W);
+    if (phase === 'serve' && who === server) launch();
   }
 }, { passive: false });
 
@@ -465,6 +482,7 @@ cv.addEventListener('mousedown', e => {
   mouseWho = p.y < H / 2 ? 2 : 1;
   mouseDown = true;
   padFor(mouseWho).target = clamp(p.x, 0, W);
+  if (phase === 'serve' && mouseWho === server) launch();
 });
 window.addEventListener('mousemove', e => {
   if (!mouseDown) return;
@@ -482,6 +500,7 @@ window.addEventListener('keydown', e => {
   keys[e.code] = true;
   if (e.code === 'Space') togglePause();
   if (e.code === 'Enter' && (phase === 'menu' || phase === 'over')) startGame();
+  if (phase === 'serve' && ((e.code === 'ArrowUp' && server === 1) || (e.code === 'KeyW' && server === 2))) launch();
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
@@ -504,7 +523,7 @@ btnSound.addEventListener('click', e => {
   btnSound.textContent = soundOn ? '🔊' : '🔇';
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && (phase === 'play' || phase === 'count') && !paused) togglePause();
+  if (document.hidden && (phase === 'play' || phase === 'serve') && !paused) togglePause();
 });
 
 /* =========================================================
@@ -627,6 +646,17 @@ function drawScore(){
   });
 }
 
+function drawServeHint(){
+  if (phase !== 'serve') return;
+  const paint = () => {
+    ctx.font = fontHint; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.globalAlpha = 0.65 + 0.35 * Math.sin(performance.now() / 260);
+    ctx.fillStyle = server === 1 ? '#4ade80' : '#38bdf8';
+    ctx.fillText('TAP TO SERVE', W / 2, H * 0.70);
+    ctx.globalAlpha = 1;
+  };
+  if (server === 1) paint(); else mirrorDraw(paint);
+}
 function drawBig(){
   if (!big.text) return;
   const fs = Math.round(clamp(Math.min(W, H) * 0.16, 40, 120));
@@ -667,6 +697,7 @@ function draw(){
 
   drawScore();
   drawBig();
+  drawServeHint();
 
   if (flash > 0) {
     ctx.globalAlpha = flash * 0.28;
@@ -687,10 +718,11 @@ function frame(t){
   if (dt <= 0) return;
   if (dt > 0.05) dt = 0.05;
 
-  const animating = !paused && (phase === 'play' || phase === 'count' || phase === 'goal' || flash > 0);
+  const animating = !paused && (phase === 'play' || phase === 'serve' || phase === 'goal' || flash > 0);
   if (!paused) {
     movePaddles(dt);
-    if (phase === 'play') stepPlay(dt);
+    if (phase === 'serve') stickBall();
+    else if (phase === 'play') stepPlay(dt);
     if (flash > 0) flash -= dt * 2.4;
   }
   if (animating) {
@@ -709,7 +741,7 @@ function frame(t){
 /* =========================================================
    Boot
    ========================================================= */
-window.__pb = { start:startGame, state:()=>({s1,s2,phase,paused,ball,p1,p2,W,H,baseSpeed}), pad:w=>{ (w===1?p1:p2).target = null; }, move:(who,x)=>{ (who===1?p1:p2).x = x; } };
+window.__pb = { snd:()=>Object.keys(sndBuf), start:startGame, state:()=>({s1,s2,phase,paused,ball,p1,p2,W,H,baseSpeed}), pad:w=>{ (w===1?p1:p2).target = null; }, move:(who,x)=>{ (who===1?p1:p2).x = x; } };
 
 resize();
 p1.x = p2.x = W / 2;
